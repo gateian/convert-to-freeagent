@@ -11,19 +11,13 @@ import {
   TableContainer,
   TableHead,
   TableRow,
-  Dialog,
-  DialogTitle,
-  DialogContent,
-  DialogActions,
-  ToggleButton,
-  ToggleButtonGroup,
   Alert,
 } from "@mui/material";
 import { styled } from "@mui/material/styles";
 import UploadFileIcon from "@mui/icons-material/UploadFile";
 import DownloadIcon from "@mui/icons-material/Download";
 import Papa from "papaparse";
-import { useDropzone } from "react-dropzone";
+import UploadModal from "./components/UploadModal";
 
 const StyledPaper = styled(Paper)(({ theme }) => ({
   padding: theme.spacing(2),
@@ -37,22 +31,6 @@ const TableWrapper = styled(Box)({
   overflow: "auto",
   marginTop: "16px",
 });
-
-// --- Dropzone Styling ---
-const DropzoneBox = styled(Box)(({ theme }) => ({
-  border: `2px dashed ${theme.palette.divider}`,
-  borderRadius: theme.shape.borderRadius,
-  padding: theme.spacing(4),
-  textAlign: "center",
-  cursor: "pointer",
-  backgroundColor: theme.palette.action.hover,
-  "&:hover": {
-    backgroundColor: theme.palette.action.selected,
-  },
-  marginTop: theme.spacing(2),
-  marginBottom: theme.spacing(2),
-}));
-// --- End Dropzone Styling ---
 
 interface Transaction {
   [key: string]: string;
@@ -75,20 +53,20 @@ interface StarlingTransaction extends Transaction {
   Notes: string;
 }
 
-// --- Revolut Transaction Interface ---
 interface RevolutTransaction extends Transaction {
   Type: string;
   Product: string;
   "Started Date": string;
   "Completed Date": string;
   Description: string;
-  Amount: string; // It comes as string from PapaParse
+  Amount: string;
   Fee: string;
   Currency: string;
   State: string;
   Balance: string;
 }
-// --- End Revolut Transaction Interface ---
+
+type BankType = "starling" | "revolut";
 
 function App() {
   const [originalFileName, setOriginalFileName] = useState<string>("");
@@ -100,68 +78,26 @@ function App() {
   >([]);
   const [error, setError] = useState<string | null>(null);
   const [isModalOpen, setIsModalOpen] = useState<boolean>(false);
-  const [selectedFile, setSelectedFile] = useState<File | null>(null);
-  const [selectedBank, setSelectedBank] = useState<
-    "starling" | "revolut" | null
-  >(null);
-
-  const onDrop = useCallback((acceptedFiles: File[]) => {
-    if (acceptedFiles && acceptedFiles.length > 0) {
-      const file = acceptedFiles[0];
-      if (file.type === "text/csv" || file.name.endsWith(".csv")) {
-        setSelectedFile(file);
-        setOriginalFileName(file.name);
-        setError(null);
-        setOriginalTransactions([]);
-        setFormattedTransactions([]);
-        setSelectedBank(null);
-      } else {
-        setError("Invalid file type. Please upload a CSV file.");
-        setSelectedFile(null);
-        setOriginalFileName("");
-        setSelectedBank(null);
-      }
-    }
-  }, []);
-
-  const { getRootProps, getInputProps, isDragActive } = useDropzone({
-    onDrop,
-    accept: { "text/csv": [".csv"] },
-    multiple: false,
-  });
 
   const handleOpenModal = () => {
-    setIsModalOpen(true);
-    setSelectedFile(null);
-    setSelectedBank(null);
     setError(null);
     setOriginalFileName("");
     setOriginalTransactions([]);
     setFormattedTransactions([]);
+    setIsModalOpen(true);
   };
 
   const handleCloseModal = () => {
     setIsModalOpen(false);
   };
 
-  const handleBankSelection = (
-    event: React.MouseEvent<HTMLElement>,
-    newBank: "starling" | "revolut" | null
-  ) => {
-    if (newBank !== null) {
-      setSelectedBank(newBank);
-    }
-  };
-
-  const handleProcessUpload = () => {
-    if (!selectedFile || !selectedBank) {
-      setError("Please select a file and a bank type.");
-      return;
-    }
-
+  const handleProcessUpload = (file: File, bankType: BankType) => {
     setError(null);
+    setOriginalFileName(file.name);
+    setOriginalTransactions([]);
+    setFormattedTransactions([]);
 
-    Papa.parse<Transaction>(selectedFile, {
+    Papa.parse<Transaction>(file, {
       header: true,
       skipEmptyLines: true,
       complete: (results) => {
@@ -172,33 +108,27 @@ function App() {
               .map((e) => e.message)
               .join(", ")}`
           );
-          setOriginalTransactions([]);
-          setFormattedTransactions([]);
           return;
         }
         if (!results.data || results.data.length === 0) {
           setError("CSV file is empty or invalid.");
-          setOriginalTransactions([]);
-          setFormattedTransactions([]);
           return;
         }
 
         setOriginalTransactions(results.data);
 
         let converted: FreeAgentTransaction[] | string;
-        if (selectedBank === "starling") {
+        if (bankType === "starling") {
           converted = convertStarlingToFreeAgent(results.data);
-        } else if (selectedBank === "revolut") {
+        } else if (bankType === "revolut") {
           converted = convertRevolutToFreeAgent(results.data);
         } else {
-          setError("No bank type selected.");
-          setFormattedTransactions([]);
+          setError("Invalid bank type selected.");
           return;
         }
 
         if (typeof converted === "string") {
           setError(converted);
-          setFormattedTransactions([]);
         } else {
           setFormattedTransactions(converted);
           setError(null);
@@ -208,8 +138,6 @@ function App() {
       error: (err) => {
         console.error("PapaParse error:", err);
         setError(`Error reading file: ${err.message}`);
-        setOriginalTransactions([]);
-        setFormattedTransactions([]);
       },
     });
   };
@@ -297,7 +225,6 @@ function App() {
     data: Transaction[]
   ): FreeAgentTransaction[] | string => {
     try {
-      // Check if the first row has the required Revolut columns
       if (data.length > 0) {
         const firstRowKeys = Object.keys(data[0]);
         const requiredHeaders = ["Completed Date", "Amount", "Description"];
@@ -311,51 +238,43 @@ function App() {
           }
         }
       } else {
-        return []; // Return empty if no data
+        return [];
       }
 
       return data.map((rowUntyped, index) => {
-        const row = rowUntyped as RevolutTransaction; // Treat row as RevolutTransaction
-        const rowIndex = index + 2; // +1 for 0-based index, +1 for header row
+        const row = rowUntyped as RevolutTransaction;
+        const rowIndex = index + 2;
 
-        // --- Validation ---
         if (!row["Completed Date"]) {
           throw new Error(`Missing 'Completed Date' in row ${rowIndex}`);
         }
         if (row.Amount === undefined || row.Amount === null) {
           throw new Error(`Missing 'Amount' in row ${rowIndex}`);
         }
-        // Description can be empty, default to empty string
         const descriptionRaw = row.Description || "";
 
-        // --- Date Formatting ---
-        // Revolut format seems to be 'YYYY-MM-DD HH:MM:SS'
-        const dateString = row["Completed Date"].split(" ")[0]; // Get the YYYY-MM-DD part
+        const dateString = row["Completed Date"].split(" ")[0];
         const dateParts = dateString.split("-");
         if (
           dateParts.length !== 3 ||
-          dateParts[0].length !== 4 || // YYYY
-          dateParts[1].length !== 2 || // MM
-          dateParts[2].length !== 2 // DD
+          dateParts[0].length !== 4 ||
+          dateParts[1].length !== 2 ||
+          dateParts[2].length !== 2
         ) {
           throw new Error(
             `Invalid date format in row ${rowIndex}: "${row["Completed Date"]}". Expected YYYY-MM-DD.`
           );
         }
-        const formattedDate = `${dateParts[2]}/${dateParts[1]}/${dateParts[0]}`; // Convert to dd/mm/yyyy
+        const formattedDate = `${dateParts[2]}/${dateParts[1]}/${dateParts[0]}`;
 
-        // --- Amount Formatting ---
         const amount = parseFloat(row.Amount);
         if (isNaN(amount)) {
           throw new Error(
             `Invalid 'Amount' in row ${rowIndex}: "${row.Amount}". Not a valid number.`
           );
         }
-        // FreeAgent needs 2 decimal places. Revolut seems correct sign-wise.
         const formattedAmount = amount.toFixed(2);
 
-        // --- Description Formatting ---
-        // Clean description: remove commas, quotes, and newlines, then trim.
         let description = descriptionRaw.replace(/,/g, "").replace(/"/g, "");
         description = description.replace(/\r\n|\n|\r/gm, " ").trim();
 
@@ -368,7 +287,6 @@ function App() {
     } catch (e: any) {
       console.error("Revolut Conversion Error:", e);
       const errorMessage = e instanceof Error ? e.message : String(e);
-      // Prepend indication that it's a Revolut specific error
       return `Error during Revolut conversion: ${errorMessage}`;
     }
   };
@@ -402,15 +320,13 @@ function App() {
     title: string
   ): JSX.Element | null => {
     if (!data) {
-      return null; // No data provided at all
+      return null;
     }
 
-    // Handle explicitly empty array (e.g., after failed processing)
     if (Array.isArray(data) && data.length === 0) {
       return <Typography sx={{ mt: 2 }}>No data to display.</Typography>;
     }
 
-    // Ensure data[0] exists before trying to get keys from it
     if (!data[0]) {
       return (
         <Typography sx={{ mt: 2 }}>No data structure to display.</Typography>
@@ -540,60 +456,12 @@ function App() {
         </Box>
       </Box>
 
-      <Dialog
+      <UploadModal
         open={isModalOpen}
         onClose={handleCloseModal}
-        maxWidth="sm"
-        fullWidth
-      >
-        <DialogTitle>Upload Bank Statement CSV</DialogTitle>
-        <DialogContent>
-          {error && isModalOpen && (
-            <Alert severity="error" sx={{ mb: 2 }}>
-              {error}
-            </Alert>
-          )}
-          <DropzoneBox {...getRootProps()}>
-            <input {...getInputProps()} />
-            {selectedFile ? (
-              <Typography>Selected: {selectedFile.name}</Typography>
-            ) : isDragActive ? (
-              <Typography>Drop the CSV file here...</Typography>
-            ) : (
-              <Typography>
-                Drag 'n' drop a CSV file here, or click to select file
-              </Typography>
-            )}
-          </DropzoneBox>
-
-          {selectedFile && (
-            <Box
-              sx={{ display: "flex", justifyContent: "center", mt: 2, mb: 2 }}
-            >
-              <ToggleButtonGroup
-                color="primary"
-                value={selectedBank}
-                exclusive
-                onChange={handleBankSelection}
-                aria-label="Select Bank Type"
-              >
-                <ToggleButton value="starling">Starling</ToggleButton>
-                <ToggleButton value="revolut">Revolut</ToggleButton>
-              </ToggleButtonGroup>
-            </Box>
-          )}
-        </DialogContent>
-        <DialogActions>
-          <Button onClick={handleCloseModal}>Cancel</Button>
-          <Button
-            onClick={handleProcessUpload}
-            variant="contained"
-            disabled={!selectedFile || !selectedBank}
-          >
-            Process File
-          </Button>
-        </DialogActions>
-      </Dialog>
+        onSubmit={handleProcessUpload}
+        processingError={error}
+      />
     </Container>
   );
 }
