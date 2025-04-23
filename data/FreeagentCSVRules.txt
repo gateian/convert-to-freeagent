@@ -1,0 +1,31 @@
+Format a CSV file to upload a bank statement
+This article explains how to download and format a CSV file in order to upload a bank statement to your FreeAgent account. It also explains how to download and use a CSV file template.
+
+If your bank doesn’t support OFX or QIF bank statement formats when downloading a bank statement from your online banking, you’ll need to download a CSV file instead and format it before you can upload it into FreeAgent.
+
+You’ll need to have level 6 access or above to your FreeAgent account to upload a CSV file into FreeAgent.
+
+Download a CSV file
+You can either download a CSV file from your bank’s online banking and format it using the structure outlined below or download and populate this CSV file template.
+
+To use the CSV file template, open it in your preferred spreadsheet software and populate the data. When you're finished, download or export it as a CSV file and upload it into FreeAgent.
+
+Format a CSV file
+To create a basic CSV file to upload to FreeAgent, you’ll need to include three columns in the following order and format them as described below:
+
+Column A - date: use the date format dd/mm/yyyy
+Column B - amount: formatted as 'number' to 2 decimal places. This column includes all bank transactions, money paid in and out of the business bank account. Transactions for money paid out should have minus signs (-) in front of them.
+Column C - description: include the invoice reference or a brief description.
+CSV.png
+
+Check the CSV file
+Once you’ve created a CSV file in the format outlined above, check:
+
+you haven’t included a header row
+the date format is dd/mm/yyyy
+you've used a single column for the transaction amounts (column B) that contains both money paid out and money paid in
+there are no commas in your amounts or description columns
+you haven't included any quote marks (")
+each description is on a single line with no carriage returns
+the file is saved with the extension .csv (not .xls or .xlsx)
+Once you’ve confirmed all of the above, you’re ready to upload your CSV file into FreeAgent.
