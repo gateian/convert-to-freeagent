@@ -1,7 +1,6 @@
 import React, { useState, useCallback } from "react";
 import {
   Container,
-  Grid,
   Typography,
   Button,
   Box,
@@ -12,15 +11,19 @@ import {
   TableContainer,
   TableHead,
   TableRow,
+  Dialog,
+  DialogTitle,
+  DialogContent,
+  DialogActions,
+  ToggleButton,
+  ToggleButtonGroup,
+  Alert,
 } from "@mui/material";
 import { styled } from "@mui/material/styles";
 import UploadFileIcon from "@mui/icons-material/UploadFile";
 import DownloadIcon from "@mui/icons-material/Download";
 import Papa from "papaparse";
-
-const Input = styled("input")({
-  display: "none",
-});
+import { useDropzone } from "react-dropzone";
 
 const StyledPaper = styled(Paper)(({ theme }) => ({
   padding: theme.spacing(2),
@@ -32,11 +35,27 @@ const StyledPaper = styled(Paper)(({ theme }) => ({
 const TableWrapper = styled(Box)({
   flexGrow: 1,
   overflow: "auto",
-  marginTop: "16px", // Add some margin above the table
+  marginTop: "16px",
 });
 
+// --- Dropzone Styling ---
+const DropzoneBox = styled(Box)(({ theme }) => ({
+  border: `2px dashed ${theme.palette.divider}`,
+  borderRadius: theme.shape.borderRadius,
+  padding: theme.spacing(4),
+  textAlign: "center",
+  cursor: "pointer",
+  backgroundColor: theme.palette.action.hover,
+  "&:hover": {
+    backgroundColor: theme.palette.action.selected,
+  },
+  marginTop: theme.spacing(2),
+  marginBottom: theme.spacing(2),
+}));
+// --- End Dropzone Styling ---
+
 interface Transaction {
-  [key: string]: string; // Allow any string keys
+  [key: string]: string;
 }
 
 interface FreeAgentTransaction {
@@ -56,6 +75,21 @@ interface StarlingTransaction extends Transaction {
   Notes: string;
 }
 
+// --- Revolut Transaction Interface ---
+interface RevolutTransaction extends Transaction {
+  Type: string;
+  Product: string;
+  "Started Date": string;
+  "Completed Date": string;
+  Description: string;
+  Amount: string; // It comes as string from PapaParse
+  Fee: string;
+  Currency: string;
+  State: string;
+  Balance: string;
+}
+// --- End Revolut Transaction Interface ---
+
 function App() {
   const [originalFileName, setOriginalFileName] = useState<string>("");
   const [originalTransactions, setOriginalTransactions] = useState<
@@ -65,64 +99,128 @@ function App() {
     FreeAgentTransaction[]
   >([]);
   const [error, setError] = useState<string | null>(null);
+  const [isModalOpen, setIsModalOpen] = useState<boolean>(false);
+  const [selectedFile, setSelectedFile] = useState<File | null>(null);
+  const [selectedBank, setSelectedBank] = useState<
+    "starling" | "revolut" | null
+  >(null);
 
-  const handleFileUpload = (event: React.ChangeEvent<HTMLInputElement>) => {
-    const file = event.target.files?.[0];
-    if (file) {
-      setOriginalFileName(file.name);
-      setError(null); // Clear previous errors
-      setOriginalTransactions([]); // Clear previous data
-      setFormattedTransactions([]); // Clear previous data
-
-      Papa.parse<Transaction>(file, {
-        header: true,
-        skipEmptyLines: true,
-        complete: (results) => {
-          if (results.errors.length > 0) {
-            console.error("Parsing errors:", results.errors);
-            setError(
-              `Error parsing CSV: ${results.errors
-                .map((e) => e.message)
-                .join(", ")}`
-            );
-            return;
-          }
-          if (!results.data || results.data.length === 0) {
-            setError("CSV file is empty or invalid.");
-            return;
-          }
-          setOriginalTransactions(results.data);
-          // --- Conversion logic will go here ---
-          // For now, let's just set dummy formatted data
-          const converted = convertToFreeAgentFormat(results.data);
-          if (typeof converted === "string") {
-            setError(converted);
-          } else {
-            setFormattedTransactions(converted);
-          }
-        },
-        error: (err) => {
-          console.error("PapaParse error:", err);
-          setError(`Error reading file: ${err.message}`);
-        },
-      });
+  const onDrop = useCallback((acceptedFiles: File[]) => {
+    if (acceptedFiles && acceptedFiles.length > 0) {
+      const file = acceptedFiles[0];
+      if (file.type === "text/csv" || file.name.endsWith(".csv")) {
+        setSelectedFile(file);
+        setOriginalFileName(file.name);
+        setError(null);
+        setOriginalTransactions([]);
+        setFormattedTransactions([]);
+        setSelectedBank(null);
+      } else {
+        setError("Invalid file type. Please upload a CSV file.");
+        setSelectedFile(null);
+        setOriginalFileName("");
+        setSelectedBank(null);
+      }
     }
-    // Reset input value to allow uploading the same file again
-    event.target.value = "";
+  }, []);
+
+  const { getRootProps, getInputProps, isDragActive } = useDropzone({
+    onDrop,
+    accept: { "text/csv": [".csv"] },
+    multiple: false,
+  });
+
+  const handleOpenModal = () => {
+    setIsModalOpen(true);
+    setSelectedFile(null);
+    setSelectedBank(null);
+    setError(null);
+    setOriginalFileName("");
+    setOriginalTransactions([]);
+    setFormattedTransactions([]);
   };
 
-  // --- Updated Conversion Logic ---
-  const convertToFreeAgentFormat = (
-    data: Transaction[] // PapaParse gives Transaction[], we'll treat as StarlingTransaction inside
+  const handleCloseModal = () => {
+    setIsModalOpen(false);
+  };
+
+  const handleBankSelection = (
+    event: React.MouseEvent<HTMLElement>,
+    newBank: "starling" | "revolut" | null
+  ) => {
+    if (newBank !== null) {
+      setSelectedBank(newBank);
+    }
+  };
+
+  const handleProcessUpload = () => {
+    if (!selectedFile || !selectedBank) {
+      setError("Please select a file and a bank type.");
+      return;
+    }
+
+    setError(null);
+
+    Papa.parse<Transaction>(selectedFile, {
+      header: true,
+      skipEmptyLines: true,
+      complete: (results) => {
+        if (results.errors.length > 0) {
+          console.error("Parsing errors:", results.errors);
+          setError(
+            `Error parsing CSV: ${results.errors
+              .map((e) => e.message)
+              .join(", ")}`
+          );
+          setOriginalTransactions([]);
+          setFormattedTransactions([]);
+          return;
+        }
+        if (!results.data || results.data.length === 0) {
+          setError("CSV file is empty or invalid.");
+          setOriginalTransactions([]);
+          setFormattedTransactions([]);
+          return;
+        }
+
+        setOriginalTransactions(results.data);
+
+        let converted: FreeAgentTransaction[] | string;
+        if (selectedBank === "starling") {
+          converted = convertStarlingToFreeAgent(results.data);
+        } else if (selectedBank === "revolut") {
+          converted = convertRevolutToFreeAgent(results.data);
+        } else {
+          setError("No bank type selected.");
+          setFormattedTransactions([]);
+          return;
+        }
+
+        if (typeof converted === "string") {
+          setError(converted);
+          setFormattedTransactions([]);
+        } else {
+          setFormattedTransactions(converted);
+          setError(null);
+          handleCloseModal();
+        }
+      },
+      error: (err) => {
+        console.error("PapaParse error:", err);
+        setError(`Error reading file: ${err.message}`);
+        setOriginalTransactions([]);
+        setFormattedTransactions([]);
+      },
+    });
+  };
+
+  const convertStarlingToFreeAgent = (
+    data: Transaction[]
   ): FreeAgentTransaction[] | string => {
     try {
-      const requiredColumns = ["Date", "Amount (GBP)", "Counter Party"];
-      // Check if the first row has the required columns
       if (data.length > 0) {
         const firstRowKeys = Object.keys(data[0]);
-        // Check for required columns specifically for Starling format
         if (!firstRowKeys.includes("Amount (GBP)")) {
-          // Check specific Starling column name
           throw new Error(
             `Missing required Starling column header: "Amount (GBP)". Found headers: ${firstRowKeys.join(
               ", "
@@ -144,25 +242,21 @@ function App() {
           );
         }
       } else {
-        return []; // Return empty if no data
+        return [];
       }
 
       return data.map((rowUntyped, index) => {
-        const row = rowUntyped as StarlingTransaction; // Treat row as StarlingTransaction
-        const rowIndex = index + 2; // +1 for 0-based index, +1 for header row
+        const row = rowUntyped as StarlingTransaction;
+        const rowIndex = index + 2;
 
-        // --- Validation ---
         if (!row.Date) {
           throw new Error(`Missing 'Date' in row ${rowIndex}`);
         }
         if (row["Amount (GBP)"] === undefined || row["Amount (GBP)"] === null) {
           throw new Error(`Missing 'Amount (GBP)' in row ${rowIndex}`);
         }
-        if (!row["Counter Party"]) {
-          // Allow empty Counter Party, use empty string.
-        }
+        const counterParty = row["Counter Party"] || "";
 
-        // --- Date Formatting ---
         const datePattern = /^\d{2}\/\d{2}\/\d{4}$/;
         if (!datePattern.test(row.Date)) {
           throw new Error(
@@ -171,7 +265,6 @@ function App() {
         }
         const formattedDate = row.Date;
 
-        // --- Amount Formatting ---
         const amount = parseFloat(row["Amount (GBP)"]);
         if (isNaN(amount)) {
           throw new Error(
@@ -180,13 +273,12 @@ function App() {
         }
         const formattedAmount = amount.toFixed(2);
 
-        // --- Description Formatting ---
-        let description = row["Counter Party"] || "";
+        let description = counterParty;
         if (row.Reference) {
           description += ` - ${row.Reference}`;
         }
         description = description.replace(/,/g, "").replace(/"/g, "");
-        description = description.replace(/\r\n|\n|\r/gm, " ");
+        description = description.replace(/\r\n|\n|\r/gm, " ").trim();
 
         return {
           Date: formattedDate,
@@ -195,9 +287,89 @@ function App() {
         };
       });
     } catch (e: any) {
-      console.error("Conversion Error:", e);
+      console.error("Starling Conversion Error:", e);
       const errorMessage = e instanceof Error ? e.message : String(e);
-      return `Error during conversion: ${errorMessage}`;
+      return `Error during Starling conversion: ${errorMessage}`;
+    }
+  };
+
+  const convertRevolutToFreeAgent = (
+    data: Transaction[]
+  ): FreeAgentTransaction[] | string => {
+    try {
+      // Check if the first row has the required Revolut columns
+      if (data.length > 0) {
+        const firstRowKeys = Object.keys(data[0]);
+        const requiredHeaders = ["Completed Date", "Amount", "Description"];
+        for (const header of requiredHeaders) {
+          if (!firstRowKeys.includes(header)) {
+            throw new Error(
+              `Missing required Revolut column header: "${header}". Found headers: ${firstRowKeys.join(
+                ", "
+              )}`
+            );
+          }
+        }
+      } else {
+        return []; // Return empty if no data
+      }
+
+      return data.map((rowUntyped, index) => {
+        const row = rowUntyped as RevolutTransaction; // Treat row as RevolutTransaction
+        const rowIndex = index + 2; // +1 for 0-based index, +1 for header row
+
+        // --- Validation ---
+        if (!row["Completed Date"]) {
+          throw new Error(`Missing 'Completed Date' in row ${rowIndex}`);
+        }
+        if (row.Amount === undefined || row.Amount === null) {
+          throw new Error(`Missing 'Amount' in row ${rowIndex}`);
+        }
+        // Description can be empty, default to empty string
+        const descriptionRaw = row.Description || "";
+
+        // --- Date Formatting ---
+        // Revolut format seems to be 'YYYY-MM-DD HH:MM:SS'
+        const dateString = row["Completed Date"].split(" ")[0]; // Get the YYYY-MM-DD part
+        const dateParts = dateString.split("-");
+        if (
+          dateParts.length !== 3 ||
+          dateParts[0].length !== 4 || // YYYY
+          dateParts[1].length !== 2 || // MM
+          dateParts[2].length !== 2 // DD
+        ) {
+          throw new Error(
+            `Invalid date format in row ${rowIndex}: "${row["Completed Date"]}". Expected YYYY-MM-DD.`
+          );
+        }
+        const formattedDate = `${dateParts[2]}/${dateParts[1]}/${dateParts[0]}`; // Convert to dd/mm/yyyy
+
+        // --- Amount Formatting ---
+        const amount = parseFloat(row.Amount);
+        if (isNaN(amount)) {
+          throw new Error(
+            `Invalid 'Amount' in row ${rowIndex}: "${row.Amount}". Not a valid number.`
+          );
+        }
+        // FreeAgent needs 2 decimal places. Revolut seems correct sign-wise.
+        const formattedAmount = amount.toFixed(2);
+
+        // --- Description Formatting ---
+        // Clean description: remove commas, quotes, and newlines, then trim.
+        let description = descriptionRaw.replace(/,/g, "").replace(/"/g, "");
+        description = description.replace(/\r\n|\n|\r/gm, " ").trim();
+
+        return {
+          Date: formattedDate,
+          Amount: formattedAmount,
+          Description: description,
+        };
+      });
+    } catch (e: any) {
+      console.error("Revolut Conversion Error:", e);
+      const errorMessage = e instanceof Error ? e.message : String(e);
+      // Prepend indication that it's a Revolut specific error
+      return `Error during Revolut conversion: ${errorMessage}`;
     }
   };
 
@@ -206,20 +378,19 @@ function App() {
       setError("No formatted data available to download.");
       return;
     }
-    setError(null); // Clear error
+    setError(null);
 
     const csv = Papa.unparse(formattedTransactions, {
-      quotes: false, // Don't add quotes as per FreeAgent rules
-      header: false, // No header row for FreeAgent
+      quotes: false,
+      header: false,
     });
 
     const blob = new Blob([csv], { type: "text/csv;charset=utf-8;" });
     const link = document.createElement("a");
     const url = URL.createObjectURL(blob);
     link.setAttribute("href", url);
-    // Construct filename: originalName_freeagent.csv
-    const baseName = originalFileName.replace(/\.[^/.]+$/, ""); // Remove original extension
-    link.setAttribute("download", `${baseName}_freeagent.csv`);
+    const baseName = originalFileName.replace(/\.[^/.]+$/, "");
+    link.setAttribute("download", `${baseName || "download"}_freeagent.csv`);
     link.style.visibility = "hidden";
     document.body.appendChild(link);
     link.click();
@@ -229,9 +400,21 @@ function App() {
   const renderTable = (
     data: Transaction[] | FreeAgentTransaction[],
     title: string
-  ) => {
-    if (!data || data.length === 0) {
+  ): JSX.Element | null => {
+    if (!data) {
+      return null; // No data provided at all
+    }
+
+    // Handle explicitly empty array (e.g., after failed processing)
+    if (Array.isArray(data) && data.length === 0) {
       return <Typography sx={{ mt: 2 }}>No data to display.</Typography>;
+    }
+
+    // Ensure data[0] exists before trying to get keys from it
+    if (!data[0]) {
+      return (
+        <Typography sx={{ mt: 2 }}>No data structure to display.</Typography>
+      );
     }
 
     const headers = Object.keys(data[0]);
@@ -242,7 +425,6 @@ function App() {
           {title}
         </Typography>
         <TableContainer component={Paper} sx={{ maxHeight: "60vh" }}>
-          {" "}
           <Table stickyHeader size="small">
             <TableHead>
               <TableRow>
@@ -257,9 +439,8 @@ function App() {
               {data.map((row, index) => (
                 <TableRow key={index}>
                   {headers.map((header) => (
-                    // Fix 2: Use more type-safe access
                     <TableCell key={header}>
-                      {row[header as keyof typeof row]}
+                      {(row as Transaction)[header]}
                     </TableCell>
                   ))}
                 </TableRow>
@@ -274,71 +455,68 @@ function App() {
   return (
     <Container maxWidth="xl" sx={{ mt: 4, mb: 4 }}>
       <Typography variant="h4" component="h1" gutterBottom align="center">
-        Starling Bank CSV to FreeAgent Converter
+        Bank CSV to FreeAgent Converter
       </Typography>
-      {error && (
-        <Typography color="error" align="center" sx={{ mb: 2 }}>
-          Error: {error}
-        </Typography>
+      {error && !isModalOpen && (
+        <Alert severity="error" sx={{ mb: 2 }}>
+          {error}
+        </Alert>
       )}
-      {/* Flexbox layout replacing Grid */}
       <Box
         sx={{
           display: "flex",
-          flexDirection: { xs: "column", md: "row" }, // Stack vertically on small screens, row on medium+
-          gap: 3, // Spacing between columns, replaces Grid spacing
-          height: "calc(100vh - 150px)", // Maintain overall height
+          flexDirection: { xs: "column", md: "row" },
+          gap: 3,
+          height: "calc(100vh - 150px)",
           width: "100%",
         }}
       >
-        {/* Left Column Box */}
         <Box
           sx={{
-            width: { xs: "100%", md: "50%" }, // Full width on small, half on medium+
-            display: "flex", // Use flex for inner content alignment
+            width: { xs: "100%", md: "50%" },
+            display: "flex",
             flexDirection: "column",
-            height: "100%", // Ensure Box takes full height of flex container
+            height: "100%",
           }}
         >
           <StyledPaper elevation={3}>
             <Typography variant="h5" component="h2" gutterBottom>
-              Original Starling Data
+              Source Bank Data Preview
             </Typography>
-            <label htmlFor="upload-csv-button">
-              <Input
-                accept=".csv"
-                id="upload-csv-button"
-                type="file"
-                onChange={handleFileUpload}
-              />
-              <Button
-                variant="contained"
-                component="span"
-                startIcon={<UploadFileIcon />}
-                fullWidth
-              >
-                Upload Starling CSV
-              </Button>
-            </label>
-            {renderTable(
-              originalTransactions,
-              originalFileName || "Uploaded Transactions"
+            <Button
+              variant="contained"
+              component="span"
+              startIcon={<UploadFileIcon />}
+              fullWidth
+              onClick={handleOpenModal}
+              sx={{ mb: 2 }}
+            >
+              Upload CSV File
+            </Button>
+            {originalTransactions.length > 0 ? (
+              renderTable(
+                originalTransactions,
+                originalFileName || "Uploaded Transactions"
+              )
+            ) : (
+              <Typography sx={{ mt: 2, textAlign: "center" }}>
+                Upload a CSV file to see the preview.
+              </Typography>
             )}
           </StyledPaper>
         </Box>
 
-        {/* Right Column Box */}
         <Box
           sx={{
-            width: { xs: "100%", md: "50%" }, // Full width on small, half on medium+
-            display: "flex", // Use flex for inner content alignment
+            width: { xs: "100%", md: "50%" },
+            display: "flex",
             flexDirection: "column",
-            height: "100%", // Ensure Box takes full height of flex container
+            height: "100%",
           }}
         >
           <StyledPaper elevation={3}>
             <Typography variant="h5" component="h2" gutterBottom>
-              Formatted FreeAgent Data
+              Formatted FreeAgent Data Preview
             </Typography>
             <Button
               variant="contained"
@@ -347,13 +525,75 @@ function App() {
               onClick={handleDownload}
               disabled={formattedTransactions.length === 0}
               fullWidth
+              sx={{ mb: 2 }}
             >
               Download FreeAgent CSV
             </Button>
-            {renderTable(formattedTransactions, "Preview for FreeAgent")}
+            {formattedTransactions.length > 0 ? (
+              renderTable(formattedTransactions, "Preview for FreeAgent")
+            ) : (
+              <Typography sx={{ mt: 2, textAlign: "center" }}>
+                Processed data will appear here.
+              </Typography>
+            )}
           </StyledPaper>
         </Box>
       </Box>
+
+      <Dialog
+        open={isModalOpen}
+        onClose={handleCloseModal}
+        maxWidth="sm"
+        fullWidth
+      >
+        <DialogTitle>Upload Bank Statement CSV</DialogTitle>
+        <DialogContent>
+          {error && isModalOpen && (
+            <Alert severity="error" sx={{ mb: 2 }}>
+              {error}
+            </Alert>
+          )}
+          <DropzoneBox {...getRootProps()}>
+            <input {...getInputProps()} />
+            {selectedFile ? (
+              <Typography>Selected: {selectedFile.name}</Typography>
+            ) : isDragActive ? (
+              <Typography>Drop the CSV file here...</Typography>
+            ) : (
+              <Typography>
+                Drag 'n' drop a CSV file here, or click to select file
+              </Typography>
+            )}
+          </DropzoneBox>
+
+          {selectedFile && (
+            <Box
+              sx={{ display: "flex", justifyContent: "center", mt: 2, mb: 2 }}
+            >
+              <ToggleButtonGroup
+                color="primary"
+                value={selectedBank}
+                exclusive
+                onChange={handleBankSelection}
+                aria-label="Select Bank Type"
+              >
+                <ToggleButton value="starling">Starling</ToggleButton>
+                <ToggleButton value="revolut">Revolut</ToggleButton>
+              </ToggleButtonGroup>
+            </Box>
+          )}
+        </DialogContent>
+        <DialogActions>
+          <Button onClick={handleCloseModal}>Cancel</Button>
+          <Button
+            onClick={handleProcessUpload}
+            variant="contained"
+            disabled={!selectedFile || !selectedBank}
+          >
+            Process File
+          </Button>
+        </DialogActions>
+      </Dialog>
     </Container>
   );
 }
